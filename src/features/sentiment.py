@@ -7,7 +7,27 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import datetime
+
+# Split on sentence-final punctuation followed by whitespace. Deliberately dependency-free (no nltk) so the
+# module imports cheaply and unit tests need no downloads.
+_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split text into non-empty, stripped sentences using a lightweight regex."""
+    return [s.strip() for s in _SENT_SPLIT.split(text.strip()) if s.strip()]
+
+
+def net_tone(label_scores: Sequence[dict]) -> float:
+    """Map a list of ``{'label', 'score'}`` dicts to ``p(positive) - p(negative)`` in [-1, 1].
+
+    Labels are matched case-insensitively so FinBERT-tone ('Positive') and ProsusAI/finbert ('positive')
+    both work. Missing labels contribute 0.
+    """
+    probs = {str(d["label"]).lower(): float(d["score"]) for d in label_scores}
+    return probs.get("positive", 0.0) - probs.get("negative", 0.0)
 
 
 class Scorer(ABC):
@@ -86,9 +106,15 @@ class FinBERTScorer(Scorer):
 
     name = "finbert"
 
-    def __init__(self, model_id: str = "yiyanghkust/finbert-tone", device: str | None = None):
+    def __init__(
+        self,
+        model_id: str = "yiyanghkust/finbert-tone",
+        device: str | None = None,
+        batch_size: int = 16,
+    ):
         self.model_id = model_id
         self.device = device
+        self.batch_size = batch_size
         self._pipe_obj = None  # lazy, per-instance (avoids lru_cache-on-method leak)
 
     def _pipe(self):
@@ -102,9 +128,24 @@ class FinBERTScorer(Scorer):
         return self._pipe_obj
 
     def score(self, text: str, as_of: datetime) -> float:
-        """TODO (prompt #5): split text into sentences, run the pipeline in batches, map
-        {positive, negative, neutral} probabilities to a net tone in [-1, 1], aggregate (mean)."""
-        raise NotImplementedError("Implement via LLM_PROMPTS.md prompt #5.")
+        """Mean sentence-level net tone from FinBERT, in [-1, 1].
+
+        Splits ``text`` into sentences, runs them through the FinBERT classification pipeline in batches,
+        maps each sentence's {positive, negative, neutral} probabilities to ``p(pos) - p(neg)``, and averages.
+
+        ``as_of`` is part of the common :class:`Scorer` interface but is not used for gating here: FinBERT is a
+        fixed encoder with no training-cutoff leakage concern (see :class:`ChronoBERTScorer` for that control);
+        the text passed in is already dissemination-gated upstream.
+        """
+        sentences = split_sentences(text)
+        if not sentences:
+            return 0.0
+        outputs = self._pipe()(sentences, batch_size=self.batch_size, truncation=True)
+        tones = [net_tone(item) for item in outputs]
+        if not tones:
+            return 0.0
+        mean_tone = sum(tones) / len(tones)
+        return float(max(-1.0, min(1.0, mean_tone)))
 
 
 class ChronoBERTScorer(Scorer):

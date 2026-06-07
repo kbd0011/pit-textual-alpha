@@ -46,3 +46,13 @@ export SEC_USER_AGENT="Your Name your@email.com"   # required by SEC
 export OPENAI_API_KEY=...                           # for the generative-LLM signal
 python -m src.ingest.edgar --cik 0000320193 --forms 10-K   # example: Apple 10-Ks
 ```
+
+## Data caveats (disclosed, not hidden)
+- **Survivorship bias.** `src/ingest/universe.py` separates two regimes. A *PIT-accurate* `UniverseTable`
+  (built from a historical membership CSV with `start_date`/`end_date` per name) gives true point-in-time
+  constituents. The bundled `fetch_current_sp1500()` returns **today's** constituents only — its
+  `members_as_of(date)` is identical for every date and raises a `SurvivorshipWarning`. Backtests run on a
+  current snapshot are upward-biased; supply a historical CSV for an honest universe, or report results as
+  survivorship-uncorrected.
+- **No CRSP.** Prices come from yfinance (Stooq fallback); the Stooq fallback is **not** split/dividend
+  adjusted. Forward returns enter at the next session's open (`src/ingest/prices.py`) to avoid look-ahead.

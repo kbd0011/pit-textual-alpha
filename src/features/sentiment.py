@@ -31,14 +31,46 @@ class LoughranMcDonaldScorer(Scorer):
     name = "lm_dictionary"
     _WORD = re.compile(r"[A-Za-z]+")
 
-    def __init__(self, positive: set[str], negative: set[str]):
+    def __init__(
+        self, positive: set[str], negative: set[str], uncertainty: set[str] | None = None
+    ):
         self.positive = {w.lower() for w in positive}
         self.negative = {w.lower() for w in negative}
+        self.uncertainty = {w.lower() for w in (uncertainty or set())}
 
     @classmethod
     def from_master_csv(cls, path: str) -> LoughranMcDonaldScorer:
-        """TODO (prompt #4): parse the LM master dictionary CSV into positive/negative word sets."""
-        raise NotImplementedError("Implement via LLM_PROMPTS.md prompt #4.")
+        """Build the scorer from the official Notre Dame SRAF master dictionary CSV.
+
+        In the master file each sentiment column (``Negative``, ``Positive``, ``Uncertainty``, ...) holds the
+        *year* a word was first assigned to that category, or ``0`` if it never was. A word belongs to a
+        category iff its value in that column is non-zero. Words are stored uppercase; we lowercase them to
+        match :meth:`score`'s tokenization. Column matching is case-insensitive.
+
+        Parameters
+        ----------
+        path : str
+            Path to ``Loughran-McDonald_MasterDictionary_*.csv``.
+        """
+        import pandas as pd
+
+        df = pd.read_csv(path)
+        cols = {c.lower().strip(): c for c in df.columns}
+        word_col = cols.get("word", df.columns[0])
+        words = df[word_col].astype(str)
+
+        def category(name: str) -> set[str]:
+            col = cols.get(name)
+            if col is None:
+                return set()
+            flags = pd.to_numeric(df[col], errors="coerce").fillna(0) != 0
+            return {w.lower() for w in words[flags]}
+
+        return cls(
+            positive=category("positive"),
+            negative=category("negative"),
+            uncertainty=category("uncertainty"),
+        )
 
     def score(self, text: str, as_of: datetime) -> float:  # noqa: D401
         tokens = [t.lower() for t in self._WORD.findall(text)]

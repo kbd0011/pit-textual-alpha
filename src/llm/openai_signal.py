@@ -9,11 +9,26 @@ Three safeguards baked in:
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+
+MAX_CHARS = 12000  # truncate disclosure text to keep token cost bounded and deterministic
+_NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
+
+def parse_score(raw: str) -> float:
+    """Extract the leading signed number from an LLM response and clip to [-1, 1].
+
+    Robust to formats like ``"-0.3 because revenue declined"`` or ``"+0.5"``. Raises if no number is present.
+    """
+    m = _NUMBER.search(raw or "")
+    if m is None:
+        raise ValueError(f"no parseable score in model response: {raw!r}")
+    return max(-1.0, min(1.0, float(m.group())))
 
 
 @dataclass
@@ -83,20 +98,35 @@ class OpenAISignal:
             )
 
     def score(self, text: str, as_of: datetime, company_names: list[str] | None = None) -> float:
-        r"""Score a disclosure. Applies the cutoff guard; uses cache; parses the leading number.
+        """Score a disclosure in [-1, 1]. Applies the cutoff guard, uses the on-disk cache, parses the number.
 
-        TODO (prompt #7): implement the API call + robust number parsing. Pseudocode:
-            self._guard_cutoff(as_of)
-            text2 = anonymize(text, company_names or [])          # for the L2 arm
-            prompt = PROMPT_TEMPLATE.format(horizon=self.horizon, text=text2[:MAX_CHARS])
-            cached = self._cache_path(prompt)
-            if cached.exists(): return json.loads(cached.read_text())["score"]
-            resp = self._client_lazy().chat.completions.create(model=self.model,
-                       messages=[{"role": "user", "content": prompt}], temperature=0)
-            raw = resp.choices[0].message.content
-            val = float(re.search(r"-?\d+(\.\d+)?", raw).group())
-            val = max(-1.0, min(1.0, val))
-            cached.write_text(json.dumps({"score": val, "raw": raw}))
-            return val
+        Parameters
+        ----------
+        text : str
+            The disclosure text (already dissemination-gated upstream).
+        as_of : datetime
+            The decision time; checked against the model's training cutoff.
+        company_names : list[str], optional
+            If provided, entities are masked before prompting (the L2 anonymization arm).
+
+        Returns
+        -------
+        float
+            The model's directional score, clipped to [-1, 1]. Cached responses are returned without an API
+            call (deterministic, cheap re-runs).
         """
-        raise NotImplementedError("Implement via LLM_PROMPTS.md prompt #7.")
+        self._guard_cutoff(as_of)
+        text2 = anonymize(text, company_names or [])
+        prompt = PROMPT_TEMPLATE.format(horizon=self.horizon, text=text2[:MAX_CHARS])
+        cached = self._cache_path(prompt)
+        if cached.exists():
+            return float(json.loads(cached.read_text())["score"])
+        resp = self._client_lazy().chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+        )
+        raw = resp.choices[0].message.content
+        val = parse_score(raw)
+        cached.write_text(json.dumps({"score": val, "raw": raw}))
+        return val

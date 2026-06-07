@@ -1,0 +1,28 @@
+# caches & data
+.cache/
+data/
+*.pkl
+*.parquet
+*.duckdb
+# outputs
+reports/*.png
+reports/*.csv
+wandb/
+outputs/
+multirun/
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+# env
+.venv/
+venv/
+.env
+# dvc
+/dvc.lock
+.dvc/cache
+# os
+.DS_Store

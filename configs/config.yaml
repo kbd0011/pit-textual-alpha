@@ -1,0 +1,36 @@
+# Hydra config for Project 4
+defaults:
+  - _self_
+
+seed: 42
+
+edgar:
+  user_agent: ${oc.env:SEC_USER_AGENT}
+  max_rps: 8                 # stay under SEC's 10 req/s
+  forms: ["10-K", "10-Q"]
+  after_hours_cutoff_et: "17:30"
+  ownership_cutoff_et: "22:00"
+
+universe:
+  source: "sp1500"           # disclose survivorship bias
+  start: "2008-01-01"
+  end: "2023-07-01"          # align with ChronoBERT vintages
+
+text:
+  section: "mdna"            # mdna | risk_factors | full
+  max_tokens: 4096
+
+methods: ["lm_dictionary", "finbert", "openai_llm", "chronobert"]
+leakage_levels: ["L0_naive", "L1_timestamp", "L2_anon", "L3_chrono", "L4_probe"]
+
+backtest:
+  horizon_days: 5
+  quantiles: 5               # long top quintile, short bottom quintile
+  cost_bps: 10.0
+  rebalance: "weekly"
+
+validation:
+  cpcv_groups: 8
+  cpcv_k_test: 2
+  embargo_pct: 0.01
+  n_trials_for_dsr: 60       # count EVERY configuration you tried, honestly

@@ -8,7 +8,11 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 # Split on sentence-final punctuation followed by whitespace. Deliberately dependency-free (no nltk) so the
 # module imports cheaply and unit tests need no downloads.
@@ -151,23 +155,89 @@ class FinBERTScorer(Scorer):
 class ChronoBERTScorer(Scorer):
     """Chronologically-consistent encoder (ChronoBERT) — the leakage-free control.
 
-    Select the model vintage whose training cutoff <= as_of.year so the model could not have seen the future.
+    The whole point of this scorer is that the model cannot have memorized the future: we select the newest
+    *vintage* whose training **cutoff date** is on or before ``as_of``. If no vintage qualifies (``as_of`` is
+    earlier than every cutoff) we refuse to score rather than risk look-ahead.
+
+    Signal generation is a two-stage design: (1) embed the text with the chosen vintage (a frozen encoder),
+    (2) map the embedding to a [-1, 1] signal with a lightweight *probe head* that the caller fits **only on
+    labels dated before ``as_of``**. The probe is injected (``probe=``) so the fit-window discipline lives with
+    the experiment harness, not here.
     """
 
     name = "chronobert"
 
-    # Map an as-of year to the latest permissible vintage repo (fill with real vintages you download).
-    VINTAGES: dict[int, str] = {
-        # 2008: "manelalab/chrono-bert-v1-19991231",  # example placeholders — verify exact repo names
-        # 2015: "manelalab/chrono-bert-v1-20141231",
-        # 2020: "manelalab/chrono-bert-v1-20191231",
+    # Default registry: training cutoff -> HF repo. Verify exact repo names against the manelalab releases
+    # before downloading; these follow the published vintage naming (chrono-bert-v1-YYYYMMDD).
+    DEFAULT_VINTAGES: dict[date, str] = {
+        date(1999, 12, 31): "manelalab/chrono-bert-v1-19991231",
+        date(2009, 12, 31): "manelalab/chrono-bert-v1-20091231",
+        date(2014, 12, 31): "manelalab/chrono-bert-v1-20141231",
+        date(2019, 12, 31): "manelalab/chrono-bert-v1-20191231",
     }
 
+    def __init__(
+        self,
+        probe=None,
+        vintages: dict | None = None,
+        device: str | None = None,
+    ):
+        # Normalize vintage keys to datetime.date so str/date inputs both work.
+        raw = self.DEFAULT_VINTAGES if vintages is None else vintages
+        self.vintages: dict[date, str] = {
+            (k if isinstance(k, date) else datetime.fromisoformat(str(k)).date()): v
+            for k, v in raw.items()
+        }
+        self.probe = probe
+        self.device = device
+        self._models: dict[str, object] = {}  # repo -> (tokenizer, model), lazily loaded
+
     def pick_vintage(self, as_of: datetime) -> str:
-        """TODO (prompt #6): choose the newest vintage with cutoff <= as_of; raise if none qualifies."""
-        raise NotImplementedError("Implement via LLM_PROMPTS.md prompt #6.")
+        """Return the repo of the newest vintage with cutoff <= ``as_of``; raise if none qualifies."""
+        as_of_date = as_of.date() if isinstance(as_of, datetime) else date.fromisoformat(str(as_of))
+        eligible = [(cut, repo) for cut, repo in self.vintages.items() if cut <= as_of_date]
+        if not eligible:
+            earliest = min(self.vintages) if self.vintages else None
+            raise ValueError(
+                f"No ChronoBERT vintage with cutoff <= {as_of_date} (earliest available: {earliest}); "
+                "refusing to score to avoid training-cutoff look-ahead."
+            )
+        return max(eligible, key=lambda x: x[0])[1]
+
+    def _embed(self, text: str, repo: str) -> np.ndarray:
+        """Mean-pooled last-hidden-state embedding from a vintage encoder (lazy transformers/torch)."""
+        import torch
+        from transformers import AutoModel, AutoTokenizer
+
+        if repo not in self._models:
+            tok = AutoTokenizer.from_pretrained(repo)
+            mdl = AutoModel.from_pretrained(repo)
+            if self.device:
+                mdl = mdl.to(self.device)
+            mdl.eval()
+            self._models[repo] = (tok, mdl)
+        tok, mdl = self._models[repo]  # type: ignore[misc]
+        enc = tok(text, return_tensors="pt", truncation=True, max_length=512)
+        if self.device:
+            enc = {k: v.to(self.device) for k, v in enc.items()}
+        with torch.no_grad():
+            out = mdl(**enc)
+        last_hidden = out.last_hidden_state[0]                 # (seq_len, hidden)
+        mask = enc["attention_mask"][0].unsqueeze(-1)          # (seq_len, 1)
+        pooled = (last_hidden * mask).sum(0) / mask.sum().clamp(min=1)
+        return pooled.cpu().numpy()
+
+    def _apply_probe(self, embedding: np.ndarray) -> float:
+        """Map an embedding to a scalar via the injected probe (callable or sklearn-style ``predict``)."""
+        if self.probe is None:
+            raise ValueError("ChronoBERTScorer requires a fitted probe head (probe=...) to produce a signal")
+        if callable(self.probe):
+            return float(self.probe(embedding))
+        return float(self.probe.predict(embedding.reshape(1, -1))[0])
 
     def score(self, text: str, as_of: datetime) -> float:
-        """TODO (prompt #6): embed text with the chosen vintage; map to a signal (e.g., via a probe head
-        trained only on pre-as_of data) in [-1, 1]."""
-        raise NotImplementedError("Implement via LLM_PROMPTS.md prompt #6.")
+        """Embed with the cutoff-safe vintage, apply the probe head, clip to [-1, 1]."""
+        repo = self.pick_vintage(as_of)
+        embedding = self._embed(text, repo)
+        raw = self._apply_probe(embedding)
+        return float(max(-1.0, min(1.0, raw)))

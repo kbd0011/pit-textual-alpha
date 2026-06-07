@@ -29,13 +29,15 @@ project4_textual_alpha/
 ├── requirements.txt
 ├── configs/config.yaml
 ├── src/
-│   ├── ingest/edgar.py       # IMPLEMENTED: rate-limited, acceptanceDateTime-gated EDGAR client
+│   ├── ingest/edgar.py       # IMPLEMENTED: acceptanceDateTime-gated EDGAR client + MD&A extraction
+│   ├── ingest/prices.py      # IMPLEMENTED: adjusted-open forward returns, next-open entry (no look-ahead)
+│   ├── ingest/universe.py    # IMPLEMENTED: point-in-time membership w/ explicit survivorship handling
 │   ├── pit/leakage.py        # IMPLEMENTED: point-in-time guards + leakage assertions
-│   ├── features/sentiment.py # IMPLEMENTED interfaces: LM dict, FinBERT, ChronoBERT scorers
+│   ├── features/sentiment.py # IMPLEMENTED: LM dict, FinBERT, ChronoBERT (vintage) scorers
 │   ├── llm/openai_signal.py  # IMPLEMENTED: cached OpenAI scorer w/ anonymization + cutoff guard
-│   ├── backtest/             # TODO via prompts: cost-aware portfolio formation (use shared/validation.py)
-│   └── eval/                 # TODO via prompts: memorization probes, ablations, plots
-├── tests/test_lookahead.py   # IMPLEMENTED: example leakage tests
+│   ├── backtest/portfolio.py # IMPLEMENTED: quantile L/S formation + cost-aware backtest
+│   └── eval/                 # IMPLEMENTED: memorization probe (L4), ablation sweep (DSR/PBO/CPCV), plots
+├── tests/                    # IMPLEMENTED: leakage + per-module tests (no network/GPU; models mocked)
 └── .github/workflows/ci.yml
 ```
 
@@ -56,3 +58,36 @@ python -m src.ingest.edgar --cik 0000320193 --forms 10-K   # example: Apple 10-K
   survivorship-uncorrected.
 - **No CRSP.** Prices come from yfinance (Stooq fallback); the Stooq fallback is **not** split/dividend
   adjusted. Forward returns enter at the next session's open (`src/ingest/prices.py`) to avoid look-ahead.
+
+## Reproduce the experiment
+```bash
+# 1. Ingest filings (PIT-gated) and prices, score with each method, form the signal panels.
+# 2. Run the ablation sweep -> results table + figure:
+python -c "from src.eval.ablations import run_ablation, decay_by_horizon, plot_ablation; ..."
+```
+The ablation harness (`src/eval/ablations.py`) takes one signal panel per (method, leakage-level) cell and
+emits net Sharpe (per-period + annualized), the **Deflated Sharpe Ratio** against the expected maximum over
+every configuration tried, **CPCV** out-of-sample Sharpe mean/std, a single **PBO** across cells, and a
+decay-by-horizon curve, saving a two-panel figure to `reports/`.
+
+## Results
+
+> **Template — fill from your real run; do not inflate.** Numbers below are placeholders, not measured results.
+
+Headline (per `shared/RIGOR.md`):
+
+> "Real-time long/short **net Sharpe [X.XX]** (Deflated Sharpe [Y.YY] over [N] trials); naive (leaky)
+> Sharpe [Z.ZZ]. About **[P]% of the naive signal is attributable to look-ahead / memorization** (the
+> L0→L1→L2→L3 gap and the L4 probe). Signal concentrates in [regime] and decays to ~0 after [T+k]. Costs
+> assumed [10] bps; universe = S&P 1500 as-of each date ([survivorship-corrected? yes/no]); no CRSP. PBO [bb]."
+
+| method ↓ / leakage → | L0 naive | L1 timestamp | L2 anon | L3 chrono | L4 probe-adj |
+|----------------------|:--------:|:------------:|:-------:|:---------:|:------------:|
+| Loughran-McDonald    |   —      |     —        |   —     |    —      |     —        |
+| FinBERT              |   —      |     —        |   —     |    —      |     —        |
+| OpenAI LLM           |   —      |     —        |   —     |    —      |     —        |
+
+**The contribution is the decomposition, not a big Sharpe.** If the leakage-controlled (L1–L3) and
+memorization-adjusted (L4) signal is weak or zero, that *is* the finding: most apparent LLM "textual alpha"
+on disclosures is look-ahead / memorization rather than real-time reading. Report the controlled number
+honestly, alongside the naive one, with DSR and PBO.

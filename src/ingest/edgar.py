@@ -13,6 +13,7 @@ This module is intentionally dependency-light (requests + stdlib + pandas) so un
 from __future__ import annotations
 
 import argparse
+import re
 import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
@@ -147,15 +148,98 @@ def knowable_filings(filings: list[Filing], as_of: datetime) -> list[Filing]:
     return [f for f in filings if f.dissemination_time <= as_of]
 
 
-def extract_mdna(html: str) -> str:
-    """Extract Management's Discussion & Analysis (Item 7) text from a 10-K/10-Q.
+# Section boundary patterns, matched against whitespace-normalized text (case-insensitive).
+# MD&A is Item 7 in a 10-K and Item 2 in a 10-Q; we try both so one function handles either form.
+_MDNA_STARTS = (
+    r"item\s*7\b[\s\.\:\-–—]{0,8}management.{0,3}s\s+discussion\s+and\s+analysis",
+    r"item\s*2\b[\s\.\:\-–—]{0,8}management.{0,3}s\s+discussion\s+and\s+analysis",
+)
+_MDNA_ENDS = (
+    r"item\s*7a\b",                                   # 10-K: Quantitative and Qualitative Disclosures
+    r"item\s*8\b",                                    # 10-K: Financial Statements
+    r"item\s*3\b[\s\.\:\-–—]{0,8}quantitative",  # 10-Q: Quantitative and Qualitative
+    r"item\s*4\b[\s\.\:\-–—]{0,8}controls",      # 10-Q: Controls and Procedures
+)
+_RISK_STARTS = (r"item\s*1a\b[\s\.\:\-–—]{0,8}risk\s+factors",)
+_RISK_ENDS = (
+    r"item\s*1b\b",                                   # Unresolved Staff Comments
+    r"item\s*2\b[\s\.\:\-–—]{0,8}properties",
+    r"item\s*1c\b",                                   # Cybersecurity (newer filings)
+)
 
-    TODO (LLM prompt #3): implement robust section detection. Strategy:
-      1. Strip HTML to text (BeautifulSoup, drop tables/exhibits).
-      2. Locate 'Item 7.' / 'Management's Discussion and Analysis' ... up to 'Item 7A' or 'Item 8'.
-      3. Normalize whitespace; return the section. Add a fallback to risk factors (Item 1A) if absent.
+_MIN_SECTION_CHARS = 400  # below this we assume we matched a table-of-contents entry, not the body
+
+
+def _html_to_text(html: str) -> str:
+    """HTML -> whitespace-normalized plain text, dropping scripts, styles, tables and XBRL headers.
+
+    Tables are removed because financial tables are numeric noise for sentiment and their digits would
+    otherwise contaminate the text. Whitespace (incl. non-breaking spaces) is collapsed to single spaces.
     """
-    raise NotImplementedError("Implement via LLM_PROMPTS.md prompt #3 (section extraction).")
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    for tag in soup(["script", "style", "table"]):
+        tag.decompose()
+    for tag in soup.find_all(re.compile(r"^ix:", re.IGNORECASE)):  # inline-XBRL wrappers
+        tag.decompose()
+    text = soup.get_text(separator=" ")
+    text = text.replace("\xa0", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _longest_section(text: str, start_pats: Iterable[str], end_pats: Iterable[str]) -> str | None:
+    """Return the longest text slice from any start marker to the next end marker after it.
+
+    A 10-K names every section twice — once in the table of contents, once as the real body. The TOC entry is
+    immediately followed by the next TOC entry, so its start->end slice is tiny; the body slice is long. Taking
+    the longest candidate robustly selects the body over the TOC.
+    """
+    starts = [m.start() for p in start_pats for m in re.finditer(p, text, re.IGNORECASE)]
+    ends = [m.start() for p in end_pats for m in re.finditer(p, text, re.IGNORECASE)]
+    if not starts:
+        return None
+    ends.sort()
+    best: str | None = None
+    for s in starts:
+        nxt = next((e for e in ends if e > s), None)
+        candidate = text[s:nxt] if nxt is not None else text[s:]
+        if best is None or len(candidate) > len(best):
+            best = candidate
+    if best is not None and len(best) >= _MIN_SECTION_CHARS:
+        return best.strip()
+    return None
+
+
+def extract_mdna(html: str) -> str:
+    """Extract Management's Discussion & Analysis from a 10-K (Item 7) or 10-Q (Item 2).
+
+    Strips tags/tables/exhibits, locates the MD&A body between its header and the next item (7A/8 for a 10-K,
+    3/4 for a 10-Q), and normalizes whitespace. Falls back to Item 1A risk factors when MD&A is absent.
+
+    Parameters
+    ----------
+    html : str
+        Raw primary-document HTML (or plain text) of the filing.
+
+    Returns
+    -------
+    str
+        The cleaned MD&A text, or the risk-factors text if MD&A is not found.
+
+    Raises
+    ------
+    ValueError
+        If neither an MD&A nor a risk-factors section can be located.
+    """
+    text = _html_to_text(html)
+    mdna = _longest_section(text, _MDNA_STARTS, _MDNA_ENDS)
+    if mdna is not None:
+        return mdna
+    risk = _longest_section(text, _RISK_STARTS, _RISK_ENDS)
+    if risk is not None:
+        return risk
+    raise ValueError("Could not locate an MD&A (Item 7/2) or risk-factors (Item 1A) section")
 
 
 def _cli() -> None:

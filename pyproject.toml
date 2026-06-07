@@ -23,6 +23,12 @@ warn_unused_ignores = false
 no_implicit_optional = true
 files = ["src"]
 
+# shared/ is a vendored reference toolkit (clean-room López de Prado / Bailey implementations) validated
+# separately against skfolio/pypbo. Don't deep type-check it when src imports it.
+[[tool.mypy.overrides]]
+module = "shared.*"
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

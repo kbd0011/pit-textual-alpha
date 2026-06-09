@@ -101,3 +101,12 @@ Headline (per `shared/RIGOR.md`):
 memorization-adjusted (L4) signal is weak or zero, that *is* the finding: most apparent LLM "textual alpha"
 on disclosures is look-ahead / memorization rather than real-time reading. Report the controlled number
 honestly, alongside the naive one, with DSR and PBO.
+
+## References
+- Lopez-Lira, A. & Tang, Y. (2023). *Can ChatGPT Forecast Stock Price Movements?* — arXiv:2304.07619.
+- Loughran, T. & McDonald, B. (2011). *When Is a Liability Not a Liability? Textual Analysis, Dictionaries, and 10-Ks.* Journal of Finance. ([SRAF data](https://sraf.nd.edu/loughranmcdonald-master-dictionary/))
+- Huang, Yang et al. *FinBERT* — `yiyanghkust/finbert-tone`, `ProsusAI/finbert` (Hugging Face).
+- ChronoBERT / ChronoGPT — chronologically-consistent encoders, `manelalab/chrono-*` (Hugging Face).
+- López de Prado, M. (2018). *Advances in Financial Machine Learning* (purged/combinatorial CV). Wiley.
+- Bailey, D. & López de Prado, M. (2014). *The Deflated Sharpe Ratio.* J. Portfolio Management.
+- SEC EDGAR — [data.sec.gov](https://www.sec.gov/os/accessing-edgar-data) (point-in-time `acceptanceDateTime`).

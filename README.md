@@ -7,7 +7,7 @@
 > **Result (real free-data demonstration — honest negative).** End-to-end on **real SEC EDGAR filings**: 29
 > 10-Ks across 8 large caps, FinBERT-scored, with the daily signal formed twice — naively (period-dated, L0)
 > vs. `acceptanceDateTime`-gated (L1). Neither arm is profitable (net Sharpe **−1.06 naive vs −0.31 gated**,
-> Deflated Sharpe ≈ 0, **PBO 0.50**) — a candid negative consistent with a weak annual-report signal on a thin
+> Deflated Sharpe ≈ 0, **PBO 0.50**) a candid negative consistent with a weak annual report signal on a thin
 > cross-section. **The deliverable is the rigorous point-in-time / leakage-decomposition pipeline**, not a
 > tradable edge; scale to the full S&P 1500 + the LLM method ladder for a real study.
 > Reproduce: `SEC_USER_AGENT="..." python scripts/run_pipeline.py`.
@@ -22,17 +22,6 @@ clean, reproducible, point-in-time-correct benchmark that **decomposes measured 
 real-time textual signal vs. (b) leakage/memorization — across a ladder of methods (dictionary → fine-tuned
 encoder → instruction-tuned LLM) and a ladder of leakage controls.
 
-## Why this is the #1 project for you
-- Sits on the hottest 2024–2026 hiring theme (LLM/NLP "textual alpha").
-- Uses your strengths: ML/AI research, synthetic data, Python.
-- Runs entirely on **free** data (EDGAR, FinBERT, ChronoBERT) + your OpenAI API access.
-- Engages a *live, unsettled* research question, so an honest result is genuinely differentiating.
-
-## What "done" looks like
-A repo whose README states an honest headline like:
-> "Real-time long/short net Sharpe 0.6 (Deflated Sharpe 0.4 over 60 trials); naive (leaky) Sharpe 1.9.
-> ~70% of the naive signal is attributable to look-ahead/memorization. Signal concentrates in small-cap,
-> high-uncertainty filings and decays after T+2. Costs 10 bps; universe = S&P 1500 as-of each date; no CRSP."
 
 ## Pipeline
 ```mermaid
@@ -77,7 +66,7 @@ python -m src.ingest.edgar --cik 0000320193 --forms 10-K   # example: Apple 10-K
 ## Data caveats (disclosed, not hidden)
 - **Survivorship bias.** `src/ingest/universe.py` separates two regimes. A *PIT-accurate* `UniverseTable`
   (built from a historical membership CSV with `start_date`/`end_date` per name) gives true point-in-time
-  constituents. The bundled `fetch_current_sp1500()` returns **today's** constituents only — its
+  constituents. The bundled `fetch_current_sp1500()` returns **today's** constituents only, its
   `members_as_of(date)` is identical for every date and raises a `SurvivorshipWarning`. Backtests run on a
   current snapshot are upward-biased; supply a historical CSV for an honest universe, or report results as
   survivorship-uncorrected.

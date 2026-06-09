@@ -1,4 +1,8 @@
-# Project 4 — Point-in-Time NLP/LLM Textual Alpha (RANK #1)
+# Point-in-Time NLP/LLM Textual Alpha
+
+[![CI](https://github.com/kbd0011/pit-textual-alpha/actions/workflows/ci.yml/badge.svg)](https://github.com/kbd0011/pit-textual-alpha/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 
 > **Result (real free-data demonstration — honest negative).** End-to-end on **real SEC EDGAR filings**: 29
 > 10-Ks across 8 large caps, FinBERT-scored, with the daily signal formed twice — naively (period-dated, L0)
@@ -29,6 +33,17 @@ A repo whose README states an honest headline like:
 > "Real-time long/short net Sharpe 0.6 (Deflated Sharpe 0.4 over 60 trials); naive (leaky) Sharpe 1.9.
 > ~70% of the naive signal is attributable to look-ahead/memorization. Signal concentrates in small-cap,
 > high-uncertainty filings and decays after T+2. Costs 10 bps; universe = S&P 1500 as-of each date; no CRSP."
+
+## Pipeline
+```mermaid
+flowchart LR
+  E["SEC EDGAR<br/>acceptanceDateTime gating"] --> M["MD&A / risk-factor<br/>extraction"]
+  M --> S["Scorers<br/>LM · FinBERT · ChronoBERT · LLM"]
+  S --> L{"Leakage ladder<br/>L0 naive → L4 probe"}
+  P["Prices (yfinance)<br/>next-open forward returns"] --> B
+  L --> B["Quantile L/S backtest<br/>(cost-aware)"]
+  B --> A["Ablation<br/>DSR · PBO · CPCV · decay"]
+```
 
 ## Layout
 ```
@@ -101,6 +116,23 @@ Headline (per `shared/RIGOR.md`):
 memorization-adjusted (L4) signal is weak or zero, that *is* the finding: most apparent LLM "textual alpha"
 on disclosures is look-ahead / memorization rather than real-time reading. Report the controlled number
 honestly, alongside the naive one, with DSR and PBO.
+
+## Reproduce
+```bash
+make setup        # install dependencies
+make check        # lint + typecheck + test (CI parity; no network/GPU)
+SEC_USER_AGENT="Your Name your@email.com" make run   # real EDGAR -> FinBERT -> ablation
+```
+Seeds are fixed and the run is `acceptanceDateTime`-gated, so results reproduce.
+
+## Design decisions, limitations & what's next
+- **Point-in-time is the crux.** Gating on `acceptanceDateTime` (not `filingDate` / `periodOfReport`) is the
+  one decision separating a real signal from look-ahead; the L0→L4 ladder *measures* that gap instead of
+  assuming it away.
+- **Honest negative.** The shipped run is a small free-data demonstration (29 filings, 8 names), so the signal
+  is unprofitable — and that is reported, not hidden. The deliverable is the rigorous PIT pipeline.
+- **What I'd do next:** scale to the full S&P 1500 via a PIT membership table; add the ChronoBERT (L3) and
+  LLM memorization-probe (L4) rungs; sector-neutralize; add earnings-call transcripts as a second text source.
 
 ## References
 - Lopez-Lira, A. & Tang, Y. (2023). *Can ChatGPT Forecast Stock Price Movements?* — arXiv:2304.07619.

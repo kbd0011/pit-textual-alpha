@@ -1,5 +1,15 @@
 # Project 4 — Point-in-Time NLP/LLM Textual Alpha (RANK #1)
 
+> **Result (real free-data demonstration — honest negative).** End-to-end on **real SEC EDGAR filings**: 29
+> 10-Ks across 8 large caps, FinBERT-scored, with the daily signal formed twice — naively (period-dated, L0)
+> vs. `acceptanceDateTime`-gated (L1). Neither arm is profitable (net Sharpe **−1.06 naive vs −0.31 gated**,
+> Deflated Sharpe ≈ 0, **PBO 0.50**) — a candid negative consistent with a weak annual-report signal on a thin
+> cross-section. **The deliverable is the rigorous point-in-time / leakage-decomposition pipeline**, not a
+> tradable edge; scale to the full S&P 1500 + the LLM method ladder for a real study.
+> Reproduce: `SEC_USER_AGENT="..." python scripts/run_pipeline.py`.
+
+![Leakage-decomposition ablation on real EDGAR data](assets/leakage_decomposition.png)
+
 **Thesis.** *How much of the apparent return predictability from LLM analysis of corporate disclosures
 survives a rigorous removal of look-ahead bias and memorization?*
 

@@ -144,7 +144,10 @@ class FinBERTScorer(Scorer):
         sentences = split_sentences(text)
         if not sentences:
             return 0.0
-        outputs = self._pipe()(sentences, batch_size=self.batch_size, truncation=True)
+        # max_length+truncation guard the BERT 512-token limit (filing "sentences" can be very long).
+        outputs = self._pipe()(
+            sentences, batch_size=self.batch_size, truncation=True, max_length=512
+        )
         tones = [net_tone(item) for item in outputs]
         if not tones:
             return 0.0

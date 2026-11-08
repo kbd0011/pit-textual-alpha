@@ -1,4 +1,4 @@
-# Implementation Logic — Project 4 (Textual Alpha)
+# Implementation Logic — Point-in-Time Textual Alpha
 
 ## 1. The research question, precisely
 Define a daily cross-sectional signal s_{i,t} for stock i from the text of its most recent disclosure
@@ -39,17 +39,18 @@ EDGAR submissions API ──> filing index (with acceptanceDateTime)
 ## 4. Module responsibilities
 - `ingest/edgar.py` — fetch submissions, enumerate filings, attach `acceptanceDateTime`, compute dissemination
   time (next business day if accepted after 17:30 ET; 22:00 ET for ownership forms), download primary docs.
-- `ingest/transcripts.py` (TODO) — load earnings-call transcripts from a free HF dataset; attach call datetime.
-- `ingest/prices.py` (TODO) — daily prices from Stooq/yfinance; align to trading calendar; compute forward returns.
-- `pit/leakage.py` — `knowable_at(filings, as_of)`, `assert_no_lookahead(info_time, as_of)`, PIT store helpers.
+- `ingest/transcripts.py` (planned) — load earnings-call transcripts from a free HF dataset; attach call datetime.
+- `ingest/prices.py` — daily prices from yfinance (Stooq fallback); align to trading calendar; compute forward returns.
+- `pit/leakage.py` — `latest_knowable(items, as_of)`, `assert_no_lookahead(info_time, as_of)`, a `PITStore` helper.
 - `features/sentiment.py` — `LoughranMcDonaldScorer`, `FinBERTScorer`, `ChronoBERTScorer`; common `.score(text, as_of)`.
 - `llm/openai_signal.py` — cached OpenAI scorer with anonymization and a knowledge-cutoff guard.
-- `backtest/portfolio.py` (TODO) — form quantile long/short weights from s_{i,t}, lag to next open, call `cost_aware_backtest`.
-- `eval/memorization.py` (TODO) — L4 probe; compute memorization-adjusted performance.
-- `eval/ablations.py` (TODO) — sweep method × leakage level; produce the headline table with DSR + PBO.
+- `backtest/portfolio.py` — form quantile long/short weights from s_{i,t}, lag to next open, call `cost_aware_backtest`.
+- `eval/memorization.py` — L4 probe; compute memorization-adjusted performance.
+- `eval/ablations.py` — sweep method × leakage level; produce the headline table with DSR + PBO.
+- `scripts/run_pipeline.py` — the end-to-end EDGAR run: FinBERT at L0 and L1 on a 10-name universe (see README).
 
-## 5. Validation methodology (what makes it top-1%)
-- Gate on `acceptanceDateTime`; ship `tests/test_lookahead.py` that fails if you swap in a future timestamp.
+## 5. Methodology
+- Gate on `acceptanceDateTime`; `tests/test_lookahead.py` fails if a future timestamp is swapped in.
 - Anonymize entities to separate sentiment from memorized associations.
 - Use ChronoBERT/ChronoGPT as a leakage-free control and reproduce the "is look-ahead bias modest?" question.
 - Cost-aware backtest; CPCV with purge+embargo; Deflated Sharpe Ratio + Probability of Backtest Overfitting.
@@ -61,10 +62,3 @@ EDGAR submissions API ──> filing index (with acceptanceDateTime)
 - Survivorship bias from a current-constituents universe.
 - Ignoring the after-hours dissemination cutoff.
 - Costs that make the signal vanish; multiple-testing inflation; treating the OpenAI cutoff as a clean boundary.
-
-## 7. Per-lane positioning
-- **QR:** signal design + look-ahead control + DSR/CPCV rigor.
-- **Trader:** cost-aware backtest, turnover, capacity, decay.
-- **Strats:** disciplined data engineering + reproducibility + disclosure-analysis use case.
-- **DS/MLE/Applied Scientist:** production pipeline, MLOps (CI/DVC/configs/tests), LLM/transformer benchmarking.
-- **Risk / Model Validation:** model-comparison framework, leakage testing, honest negatives = "effective challenge".

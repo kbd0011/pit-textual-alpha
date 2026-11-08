@@ -4,24 +4,45 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 
-> **Result (real free-data demonstration — honest negative).** End-to-end on **real SEC EDGAR filings**: 29
-> 10-Ks across 8 large caps, FinBERT-scored, with the daily signal formed twice — naively (period-dated, L0)
-> vs. `acceptanceDateTime`-gated (L1). Neither arm is profitable (net Sharpe **−1.06 naive vs −0.31 gated**,
-> Deflated Sharpe ≈ 0, **PBO 0.50**) a candid negative consistent with a weak annual report signal on a thin
-> cross-section. **The deliverable is the rigorous point-in-time / leakage-decomposition pipeline**, not a
-> tradable edge; scale to the full S&P 1500 + the LLM method ladder for a real study.
-> Reproduce: `SEC_USER_AGENT="..." python scripts/run_pipeline.py`.
+A point-in-time research pipeline for one question: *how much of the apparent return predictability from
+reading corporate disclosures survives once each filing is dated to when the market could actually read it?*
+Filings come from SEC EDGAR and are gated on `acceptanceDateTime` (rolled to the next business day when accepted
+after the 17:30 ET cutoff). MD&A text is extracted and scored, and a cost-aware long/short backtest compares a
+naive, period-dated signal with the dissemination-gated one.
 
-![Leakage-decomposition ablation on real EDGAR data](assets/leakage_decomposition.png)
+The code is organized around two ladders. The **method ladder** has four scorers: the Loughran-McDonald
+dictionary, FinBERT, ChronoBERT (a chronologically consistent encoder) and an OpenAI LLM. The
+**leakage-control ladder** runs from L0 (naive dating) and L1 (timestamp gating) through L2 entity
+anonymization and L3 chronologically consistent models to an L4 memorization probe. Showing that an LLM can
+predict returns is not new (Lopez-Lira & Tang, 2023); the aim here is a reproducible point-in-time benchmark
+that measures how much of a measured edge each leakage control removes.
 
-**Thesis.** *How much of the apparent return predictability from LLM analysis of corporate disclosures
-survives a rigorous removal of look-ahead bias and memorization?*
+## Result: FinBERT on real EDGAR filings, L0 vs L1
 
-The contribution is **not** "an LLM predicts returns" (already shown by Lopez-Lira & Tang, 2023). It is a
-clean, reproducible, point-in-time-correct benchmark that **decomposes measured alpha** into (a) genuine
-real-time textual signal vs. (b) leakage/memorization — across a ladder of methods (dictionary → fine-tuned
-encoder → instruction-tuned LLM) and a ladder of leakage controls.
+[`scripts/run_pipeline.py`](scripts/run_pipeline.py) runs the first two rungs end to end on public data:
 
+- **Universe:** 10 sector-spread large caps (AAPL, MSFT, JNJ, JPM, XOM, PG, KO, INTC, WMT, CAT) and their
+  10-Ks filed 2017–2023; filings with no locatable MD&A or risk-factor section are skipped.
+- **Text and scoring:** MD&A (Item 7), falling back to Item 1A risk factors. FinBERT (`yiyanghkust/finbert-tone`)
+  scores the first 30 sentences of each section as mean p(positive) − p(negative).
+- **Signal:** each day, each name carries the score of its latest filing, treated as knowable either at the
+  fiscal period end (L0, naive) or at its dissemination time (L1, gated).
+- **Backtest:** tercile long/short, weekly rebalance, entry at the next session's open, 10 bps per unit of
+  turnover, 5-day forward returns from yfinance adjusted opens.
+
+| Arm | Filing treated as knowable at | Net Sharpe (full sample, ×√252) |
+|-----|-------------------------------|:-------------------------------:|
+| L0 naive | fiscal period end | −1.06 |
+| L1 gated | dissemination time (`acceptanceDateTime`) | −0.31 |
+
+Both Sharpe values are computed on the full 2017–2023 sample, not on cross-validation folds. Neither arm is
+profitable after costs, so neither comes near the Deflated Sharpe bar of 0.95. This is a negative result and
+is reported as one: on this small cross-section, annual-report tone gives no tradable edge, gated or not.
+
+![Net Sharpe by method and leakage control from the EDGAR run (FinBERT, L0 vs L1)](assets/leakage_decomposition.png)
+
+The left panel is the method × leakage heatmap (one method, two rungs in this run). The right panel is the
+horizon-decay plot; it has a single point because only the 5-day horizon was run.
 
 ## Pipeline
 ```mermaid
@@ -34,94 +55,67 @@ flowchart LR
   B --> A["Ablation<br/>DSR · PBO · CPCV · decay"]
 ```
 
+The ablation harness ([`src/eval/ablations.py`](src/eval/ablations.py)) takes one signal panel per
+(method, leakage-level) cell and returns full-sample net Sharpe (per period and ×√252), the **Deflated Sharpe
+Ratio** against the expected maximum over the configurations tried, the mean and spread of out-of-sample
+Sharpe across **CPCV** test folds, a single **PBO** across cells, and a decay-by-horizon curve.
+
 ## Layout
 ```
-project4_textual_alpha/
-├── IMPLEMENTATION_LOGIC.md   # read this first
-├── DATA.md                   # free data sources + the acceptanceDateTime rule
-├── LLM_PROMPTS.md            # ordered prompts to build each component
+pit-textual-alpha/
+├── IMPLEMENTATION_LOGIC.md      # research design and module map
+├── DATA.md                      # free data sources and the acceptanceDateTime rule
+├── LLM_PROMPTS.md
 ├── requirements.txt
 ├── configs/config.yaml
+├── scripts/run_pipeline.py      # the EDGAR -> FinBERT -> L0/L1 ablation run above
 ├── src/
-│   ├── ingest/edgar.py       # IMPLEMENTED: acceptanceDateTime-gated EDGAR client + MD&A extraction
-│   ├── ingest/prices.py      # IMPLEMENTED: adjusted-open forward returns, next-open entry (no look-ahead)
-│   ├── ingest/universe.py    # IMPLEMENTED: point-in-time membership w/ explicit survivorship handling
-│   ├── pit/leakage.py        # IMPLEMENTED: point-in-time guards + leakage assertions
-│   ├── features/sentiment.py # IMPLEMENTED: LM dict, FinBERT, ChronoBERT (vintage) scorers
-│   ├── llm/openai_signal.py  # IMPLEMENTED: cached OpenAI scorer w/ anonymization + cutoff guard
-│   ├── backtest/portfolio.py # IMPLEMENTED: quantile L/S formation + cost-aware backtest
-│   └── eval/                 # IMPLEMENTED: memorization probe (L4), ablation sweep (DSR/PBO/CPCV), plots
-├── tests/                    # IMPLEMENTED: leakage + per-module tests (no network/GPU; models mocked)
+│   ├── ingest/edgar.py          # throttled EDGAR client, acceptanceDateTime + dissemination time, MD&A extraction
+│   ├── ingest/prices.py         # adjusted-open forward returns with next-open entry
+│   ├── ingest/universe.py       # point-in-time membership table; current-snapshot mode raises a survivorship warning
+│   ├── pit/leakage.py           # point-in-time guards and look-ahead assertions
+│   ├── features/sentiment.py    # Loughran-McDonald, FinBERT, ChronoBERT (vintage-selected) scorers
+│   ├── llm/openai_signal.py     # cached OpenAI scorer with entity anonymization and a knowledge-cutoff guard
+│   ├── backtest/portfolio.py    # quantile long/short formation and cost-aware backtest
+│   └── eval/                    # L4 memorization probe, ablation sweep (DSR/PBO/CPCV), plots
+├── tests/                       # per-module tests, including look-ahead tests (no network or GPU; models mocked)
 └── .github/workflows/ci.yml
 ```
-
-## Run (once built)
-```bash
-pip install -r requirements.txt
-export SEC_USER_AGENT="Your Name your@email.com"   # required by SEC
-export OPENAI_API_KEY=...                           # for the generative-LLM signal
-python -m src.ingest.edgar --cik 0000320193 --forms 10-K   # example: Apple 10-Ks
-```
-
-## Data caveats (disclosed, not hidden)
-- **Survivorship bias.** `src/ingest/universe.py` separates two regimes. A *PIT-accurate* `UniverseTable`
-  (built from a historical membership CSV with `start_date`/`end_date` per name) gives true point-in-time
-  constituents. The bundled `fetch_current_sp1500()` returns **today's** constituents only, its
-  `members_as_of(date)` is identical for every date and raises a `SurvivorshipWarning`. Backtests run on a
-  current snapshot are upward-biased; supply a historical CSV for an honest universe, or report results as
-  survivorship-uncorrected.
-- **No CRSP.** Prices come from yfinance (Stooq fallback); the Stooq fallback is **not** split/dividend
-  adjusted. Forward returns enter at the next session's open (`src/ingest/prices.py`) to avoid look-ahead.
-
-## Reproduce the experiment
-```bash
-# 1. Ingest filings (PIT-gated) and prices, score with each method, form the signal panels.
-# 2. Run the ablation sweep -> results table + figure:
-python -c "from src.eval.ablations import run_ablation, decay_by_horizon, plot_ablation; ..."
-```
-The ablation harness (`src/eval/ablations.py`) takes one signal panel per (method, leakage-level) cell and
-emits net Sharpe (per-period + annualized), the **Deflated Sharpe Ratio** against the expected maximum over
-every configuration tried, **CPCV** out-of-sample Sharpe mean/std, a single **PBO** across cells, and a
-decay-by-horizon curve, saving a two-panel figure to `reports/`.
-
-## Results
-
-> **Template — fill from your real run; do not inflate.** Numbers below are placeholders, not measured results.
-
-Headline (per `shared/RIGOR.md`):
-
-> "Real-time long/short **net Sharpe [X.XX]** (Deflated Sharpe [Y.YY] over [N] trials); naive (leaky)
-> Sharpe [Z.ZZ]. About **[P]% of the naive signal is attributable to look-ahead / memorization** (the
-> L0→L1→L2→L3 gap and the L4 probe). Signal concentrates in [regime] and decays to ~0 after [T+k]. Costs
-> assumed [10] bps; universe = S&P 1500 as-of each date ([survivorship-corrected? yes/no]); no CRSP. PBO [bb]."
-
-| method ↓ / leakage → | L0 naive | L1 timestamp | L2 anon | L3 chrono | L4 probe-adj |
-|----------------------|:--------:|:------------:|:-------:|:---------:|:------------:|
-| Loughran-McDonald    |   —      |     —        |   —     |    —      |     —        |
-| FinBERT              |   —      |     —        |   —     |    —      |     —        |
-| OpenAI LLM           |   —      |     —        |   —     |    —      |     —        |
-
-**The contribution is the decomposition, not a big Sharpe.** If the leakage-controlled (L1–L3) and
-memorization-adjusted (L4) signal is weak or zero, that *is* the finding: most apparent LLM "textual alpha"
-on disclosures is look-ahead / memorization rather than real-time reading. Report the controlled number
-honestly, alongside the naive one, with DSR and PBO.
 
 ## Reproduce
 ```bash
 make setup        # install dependencies
-make check        # lint + typecheck + test (CI parity; no network/GPU)
-SEC_USER_AGENT="Your Name your@email.com" make run   # real EDGAR -> FinBERT -> ablation
+make check        # lint + typecheck + tests (the same steps the CI workflow runs; no network or GPU)
+SEC_USER_AGENT="Your Name your@email.com" make run   # EDGAR -> FinBERT -> L0/L1 ablation and figure
 ```
-Seeds are fixed and the run is `acceptanceDateTime`-gated, so results reproduce.
+`make run` downloads filings from EDGAR, FinBERT from Hugging Face and prices from yfinance. To list a
+company's filings with acceptance and dissemination times:
+`python -m src.ingest.edgar --cik 320193 --forms 10-K` (with `SEC_USER_AGENT` set).
 
-## Design decisions, limitations & what's next
-- **Point-in-time is the crux.** Gating on `acceptanceDateTime` (not `filingDate` / `periodOfReport`) is the
-  one decision separating a real signal from look-ahead; the L0→L4 ladder *measures* that gap instead of
-  assuming it away.
-- **Honest negative.** The shipped run is a small free-data demonstration (29 filings, 8 names), so the signal
-  is unprofitable — and that is reported, not hidden. The deliverable is the rigorous PIT pipeline.
-- **What I'd do next:** scale to the full S&P 1500 via a PIT membership table; add the ChronoBERT (L3) and
-  LLM memorization-probe (L4) rungs; sector-neutralize; add earnings-call transcripts as a second text source.
+## Design decisions
+- **Point-in-time is the crux.** Gating on `acceptanceDateTime` (not `filingDate` or `periodOfReport`) is
+  the decision that separates a real-time signal from look-ahead, and `tests/test_lookahead.py` checks that
+  future-dated information is rejected and that after-hours filings roll to the next business day.
+- **The ladder measures leakage instead of assuming it away.** Each rung is a separate signal panel run
+  through the same backtest, so the gap between rungs is a measured number.
+- **Costs and multiple testing are in the harness, not bolted on.** Every cell is net of turnover costs, and
+  the Deflated Sharpe and PBO account for the number of configurations tried.
+
+## Scope and limitations
+- **What has run:** FinBERT at L0 and L1 on the 10-name universe above. The dictionary and LLM scorers, ChronoBERT, the L2–L4
+  rungs and multi-horizon decay are implemented and unit-tested with mocked models, but not yet run on
+  EDGAR data.
+- **Sharpe construction:** the backtest applies each day's 5-day forward return as that day's return, so
+  consecutive days overlap and the ×√252 figure is not a standard annualized Sharpe. Read the two values as a
+  comparison between arms on the same footing.
+- **Universe:** a fixed list of 10 current large caps, annual 10-Ks only, and FinBERT sees the first 30
+  sentences of each section (a CPU budget). A fixed list of today's large caps builds in survivorship bias.
+  `src/ingest/universe.py` supports a historical membership CSV for a point-in-time universe; its bundled
+  S&P 1500 fetch returns current constituents only and raises a `SurvivorshipWarning`.
+- **Prices:** yfinance, no CRSP. The Stooq fallback in `src/ingest/prices.py` is not split/dividend adjusted
+  (the run above uses yfinance adjusted opens).
+- **Next:** a point-in-time S&P 1500 universe, the remaining scorers and rungs, sector neutralization, and
+  earnings-call transcripts as a second text source.
 
 ## References
 - Lopez-Lira, A. & Tang, Y. (2023). *Can ChatGPT Forecast Stock Price Movements?* — arXiv:2304.07619.
